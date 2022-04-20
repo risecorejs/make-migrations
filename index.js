@@ -12,7 +12,10 @@ void (async () => {
   const metaData = await getMetaData()
 
   for (const [modelName, model] of Object.entries(models)) {
-    if (!['Sequelize', 'sequelize'].includes(modelName)) {
+    if (
+      !['Sequelize', 'sequelize'].includes(modelName) &&
+      model.options.autoMigrations
+    ) {
       try {
         await createMigrations(model)
       } catch (err) {
