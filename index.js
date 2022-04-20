@@ -367,7 +367,8 @@ function getModelColumns(model) {
           allowNull: modelColumnOptions.allowNull === false ? false : void 0,
           unique: modelColumnOptions.unique,
           primaryKey: modelColumnOptions.primaryKey,
-          prevColumnName: modelColumnOptions.prevColumnName
+          prevColumnName: modelColumnOptions.prevColumnName,
+          defaultValue: modelColumnOptions.defaultValue
         }
       }
     }
