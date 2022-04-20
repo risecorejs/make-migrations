@@ -1,0 +1,26 @@
+{
+  "name": "@risecorejs/make-migrations",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/risecorejs/make-migrations.git"
+  },
+  "author": "Amenov Abdulsalam <amenov.abdulsalam@gmail.com>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/risecorejs/make-migrations/issues"
+  },
+  "homepage": "https://github.com/risecorejs/make-migrations#readme",
+  "dependencies": {
+    "@risecorejs/core": "^2.4.4",
+    "date-fns": "^2.28.0",
+    "deep-equal": "^2.0.5",
+    "lodash": "^4.17.21",
+    "prettier": "^2.6.2"
+  }
+}
