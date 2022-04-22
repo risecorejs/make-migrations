@@ -5,11 +5,17 @@ const prettier = require('prettier')
 const { format } = require('date-fns')
 const equal = require('deep-equal')
 const _ = require('lodash')
+const consola = require('consola')
 
-const outputPath = path.resolve('database', 'migrations')
+/**
+ * MAKE-MIGRATIONS
+ * @param outputPath {string?}
+ * @return {Promise<void>}
+ */
+module.exports = async (outputPath) => {
+  outputPath ||= path.resolve('database', 'migrations')
 
-void (async () => {
-  const metaData = await getMetaData()
+  const metaData = await getMetaData(outputPath)
 
   for (const [modelName, model] of Object.entries(models)) {
     if (
@@ -17,147 +23,153 @@ void (async () => {
       model.options.autoMigrations
     ) {
       try {
-        await createMigrations(model)
+        await createMigrations(model, outputPath, metaData)
       } catch (err) {
-        console.error('Model:', modelName, err)
+        if (err === 'no change') {
+          consola.info('Model: ' + modelName, err)
+        } else {
+          consola.error(err)
+        }
       }
     }
   }
+}
 
-  /**
-   * CREATE-MIGRATIONS
-   * @param model {Class}
-   * @return {Promise<void>}
-   */
-  async function createMigrations(model) {
-    const rawMigrations = getRawMigrations(model)
+/**
+ * CREATE-MIGRATIONS
+ * @param model {Class}
+ * @param outputPath {string}
+ * @param metaData {Object}
+ * @return {Promise<void>}
+ */
+async function createMigrations(model, outputPath, metaData) {
+  const rawMigrations = getRawMigrations(model, metaData)
 
-    for (const rawMigration of rawMigrations) {
-      const fileName = `${format(new Date(), "yyyy-MM-dd'T'HH-mm-ss")}-${
-        rawMigration.label
-      }-${model.options.tableName}.js`
+  for (const rawMigration of rawMigrations) {
+    const fileTimestamp = format(new Date(), "yyyy-MM-dd'T'HH-mm-ss")
+    const fileName = `${fileTimestamp}-${rawMigration.label}-${model.options.tableName}.js`
+    const filePath = outputPath + `/` + fileName
 
-      const filePath = outputPath + `/` + fileName
+    await fs.writeFile(
+      filePath,
+      prettier.format(formatMigrationContent(rawMigration.content), {
+        trailingComma: 'none',
+        tabWidth: 2,
+        semi: false,
+        singleQuote: true,
+        printWidth: 120,
+        parser: 'babel'
+      })
+    )
 
-      await fs.writeFile(
-        filePath,
-        prettier.format(formatMigrationContent(rawMigration.content), {
-          trailingComma: 'none',
-          tabWidth: 2,
-          semi: false,
-          singleQuote: true,
-          printWidth: 120,
-          parser: 'babel'
-        })
-      )
+    consola.success('Migration created: ' + fileName)
 
-      console.log('Migration created: ' + fileName)
-
-      await fs.writeFile(
-        outputPath + '/meta.json',
-        JSON.stringify(metaData, null, 2)
-      )
-    }
+    await fs.writeFile(
+      outputPath + '/meta.json',
+      JSON.stringify(metaData, null, 2)
+    )
   }
+}
 
-  /**
-   * GET-RAW-MIGRATIONS
-   * @param model {Class}
-   * @return {{label: string, content: string}[]}
-   */
-  function getRawMigrations(model) {
-    const migrations = []
+/**
+ * GET-RAW-MIGRATIONS
+ * @param model {Class}
+ * @param metaData {Object}
+ * @return {{label: string, content: string}[]}
+ */
+function getRawMigrations(model, metaData) {
+  const migrations = []
 
-    const modelColumns = getModelColumns(model)
+  const modelColumns = getModelColumns(model)
 
-    const metaDataByTableName = metaData[model.options.tableName]
+  const metaDataByTableName = metaData[model.options.tableName]
 
-    if (metaDataByTableName) {
-      const freezeMetaDataByTableName = Object.freeze(
-        JSON.parse(JSON.stringify(metaDataByTableName))
-      )
+  if (metaDataByTableName) {
+    const freezeMetaDataByTableName = Object.freeze(
+      JSON.parse(JSON.stringify(metaDataByTableName))
+    )
 
-      if (equal(metaDataByTableName, modelColumns)) {
-        throw 'no change'
-      } else {
-        const columns = {
-          new: {},
-          change: {},
-          rename: {},
-          remove: []
-        }
+    if (equal(metaDataByTableName, modelColumns)) {
+      throw 'no change'
+    } else {
+      const columns = {
+        new: {},
+        change: {},
+        rename: {},
+        remove: []
+      }
 
-        for (const [modelColumnName, modelColumnOptions] of Object.entries(
-          modelColumns
-        )) {
-          const currentColumnOptions = metaDataByTableName[modelColumnName]
+      for (const [modelColumnName, modelColumnOptions] of Object.entries(
+        modelColumns
+      )) {
+        const currentColumnOptions = metaDataByTableName[modelColumnName]
 
-          if (currentColumnOptions) {
-            if (!equal(currentColumnOptions, modelColumnOptions)) {
-              columns.change[modelColumnName] = modelColumnOptions
-
-              metaDataByTableName[modelColumnName] = modelColumnOptions
-            }
-          } else if (modelColumnOptions.prevColumnName) {
-            const currentColumnOptions =
-              metaDataByTableName[modelColumnOptions.prevColumnName]
-
-            if (
-              currentColumnOptions &&
-              modelColumnName !== modelColumnOptions.prevColumnName
-            ) {
-              columns.rename[modelColumnName] = modelColumnOptions
-
-              delete metaDataByTableName[modelColumnOptions.prevColumnName]
-
-              metaDataByTableName[modelColumnName] = modelColumnOptions
-            }
-          } else {
-            columns.new[modelColumnName] = modelColumnOptions
+        if (currentColumnOptions) {
+          if (!equal(currentColumnOptions, modelColumnOptions)) {
+            columns.change[modelColumnName] = modelColumnOptions
 
             metaDataByTableName[modelColumnName] = modelColumnOptions
           }
+        } else if (modelColumnOptions.prevColumnName) {
+          const currentColumnOptions =
+            metaDataByTableName[modelColumnOptions.prevColumnName]
 
-          if (currentColumnOptions) {
-            currentColumnOptions.nextColumnName = modelColumnName
-          }
-        }
-
-        for (const [currentColumnName, currentColumnOptions] of Object.entries(
-          metaDataByTableName
-        )) {
           if (
-            !modelColumns[currentColumnName] &&
-            !modelColumns[currentColumnOptions.nextColumnName]
+            currentColumnOptions &&
+            modelColumnName !== modelColumnOptions.prevColumnName
           ) {
-            delete metaDataByTableName[currentColumnName]
+            columns.rename[modelColumnName] = modelColumnOptions
 
-            columns.remove.push(currentColumnName)
+            delete metaDataByTableName[modelColumnOptions.prevColumnName]
+
+            metaDataByTableName[modelColumnName] = modelColumnOptions
           }
+        } else {
+          columns.new[modelColumnName] = modelColumnOptions
 
-          delete currentColumnOptions.nextColumnName
+          metaDataByTableName[modelColumnName] = modelColumnOptions
         }
 
-        if (!_.isEmpty(columns.new)) {
-          const columnNames = Object.keys(columns.new)
+        if (currentColumnOptions) {
+          currentColumnOptions.nextColumnName = modelColumnName
+        }
+      }
 
-          const addColumns = columnNames.map((columnName) => {
-            return `await queryInterface.addColumn('${
-              model.options.tableName
-            }', '${columnName}', ${JSON.stringify(
-              columns.new[columnName],
-              null,
-              2
-            )})`
-          })
+      for (const [currentColumnName, currentColumnOptions] of Object.entries(
+        metaDataByTableName
+      )) {
+        if (
+          !modelColumns[currentColumnName] &&
+          !modelColumns[currentColumnOptions.nextColumnName]
+        ) {
+          delete metaDataByTableName[currentColumnName]
 
-          const removeColumns = columnNames.map((columnName) => {
-            return `await queryInterface.removeColumn('${model.options.tableName}', '${columnName}')`
-          })
+          columns.remove.push(currentColumnName)
+        }
 
-          migrations.push({
-            label: columnNames.length > 1 ? 'add-columns-to' : 'add-column-to',
-            content: `module.exports = {
+        delete currentColumnOptions.nextColumnName
+      }
+
+      if (!_.isEmpty(columns.new)) {
+        const columnNames = Object.keys(columns.new)
+
+        const addColumns = columnNames.map((columnName) => {
+          return `await queryInterface.addColumn('${
+            model.options.tableName
+          }', '${columnName}', ${JSON.stringify(
+            columns.new[columnName],
+            null,
+            2
+          )})`
+        })
+
+        const removeColumns = columnNames.map((columnName) => {
+          return `await queryInterface.removeColumn('${model.options.tableName}', '${columnName}')`
+        })
+
+        migrations.push({
+          label: columnNames.length > 1 ? 'add-columns-to' : 'add-column-to',
+          content: `module.exports = {
               async up(queryInterface, DataTypes) {
                 ${addColumns.join(';')}
               },
@@ -165,39 +177,39 @@ void (async () => {
                 ${removeColumns.join(';')}
               }
             }`
-          })
+        })
+      }
+
+      if (!_.isEmpty(columns.change)) {
+        const columnNames = Object.keys(columns.change)
+
+        const changeColumns = {
+          up: columnNames.map(
+            (columnName) =>
+              `await queryInterface.changeColumn('${
+                model.options.tableName
+              }', '${columnName}', ${JSON.stringify(
+                columns.change[columnName],
+                null,
+                2
+              )})`
+          ),
+          down: columnNames.map(
+            (columnName) =>
+              `await queryInterface.changeColumn('${
+                model.options.tableName
+              }', '${columnName}', ${JSON.stringify(
+                freezeMetaDataByTableName[columnName],
+                null,
+                2
+              )})`
+          )
         }
 
-        if (!_.isEmpty(columns.change)) {
-          const columnNames = Object.keys(columns.change)
-
-          const changeColumns = {
-            up: columnNames.map(
-              (columnName) =>
-                `await queryInterface.changeColumn('${
-                  model.options.tableName
-                }', '${columnName}', ${JSON.stringify(
-                  columns.change[columnName],
-                  null,
-                  2
-                )})`
-            ),
-            down: columnNames.map(
-              (columnName) =>
-                `await queryInterface.changeColumn('${
-                  model.options.tableName
-                }', '${columnName}', ${JSON.stringify(
-                  freezeMetaDataByTableName[columnName],
-                  null,
-                  2
-                )})`
-            )
-          }
-
-          migrations.push({
-            label:
-              columnNames.length > 1 ? 'change-columns-to' : 'change-column-to',
-            content: `module.exports = {
+        migrations.push({
+          label:
+            columnNames.length > 1 ? 'change-columns-to' : 'change-column-to',
+          content: `module.exports = {
               async up(queryInterface, DataTypes) {
                 ${changeColumns.up.join(';')}
               },
@@ -205,45 +217,45 @@ void (async () => {
                 ${changeColumns.down.join(';')}
               }
             }`
-          })
+        })
+      }
+
+      if (!_.isEmpty(columns.rename)) {
+        const columnNames = Object.keys(columns.rename)
+
+        const renameColumns = {
+          up: columnNames.map(
+            (columnName) =>
+              `await queryInterface.renameColumn('${
+                model.options.tableName
+              }', '${
+                modelColumns[columnName].prevColumnName
+              }', '${columnName}', ${JSON.stringify(
+                columns.rename[columnName],
+                null,
+                2
+              )})`
+          ),
+          down: columnNames.map(
+            (columnName) =>
+              `await queryInterface.renameColumn('${
+                model.options.tableName
+              }', '${columnName}', '${
+                modelColumns[columnName].prevColumnName
+              }', ${JSON.stringify(
+                freezeMetaDataByTableName[
+                  modelColumns[columnName].prevColumnName
+                ],
+                null,
+                2
+              )})`
+          )
         }
 
-        if (!_.isEmpty(columns.rename)) {
-          const columnNames = Object.keys(columns.rename)
-
-          const renameColumns = {
-            up: columnNames.map(
-              (columnName) =>
-                `await queryInterface.renameColumn('${
-                  model.options.tableName
-                }', '${
-                  modelColumns[columnName].prevColumnName
-                }', '${columnName}', ${JSON.stringify(
-                  columns.rename[columnName],
-                  null,
-                  2
-                )})`
-            ),
-            down: columnNames.map(
-              (columnName) =>
-                `await queryInterface.renameColumn('${
-                  model.options.tableName
-                }', '${columnName}', '${
-                  modelColumns[columnName].prevColumnName
-                }', ${JSON.stringify(
-                  freezeMetaDataByTableName[
-                    modelColumns[columnName].prevColumnName
-                  ],
-                  null,
-                  2
-                )})`
-            )
-          }
-
-          migrations.push({
-            label:
-              columnNames.length > 1 ? 'rename-columns-to' : 'rename-column-to',
-            content: `module.exports = {
+        migrations.push({
+          label:
+            columnNames.length > 1 ? 'rename-columns-to' : 'rename-column-to',
+          content: `module.exports = {
               async up(queryInterface, DataTypes) {
                 ${renameColumns.up.join(';')}
               },
@@ -251,30 +263,30 @@ void (async () => {
                 ${renameColumns.down.join(';')}
               }
             }`
-          })
-        }
+        })
+      }
 
-        if (columns.remove.length) {
-          const removeColumns = columns.remove.map((columnName) => {
-            return `await queryInterface.removeColumn('${model.options.tableName}', '${columnName}')`
-          })
+      if (columns.remove.length) {
+        const removeColumns = columns.remove.map((columnName) => {
+          return `await queryInterface.removeColumn('${model.options.tableName}', '${columnName}')`
+        })
 
-          const addColumns = columns.remove.map((columnName) => {
-            return `await queryInterface.addColumn('${
-              model.options.tableName
-            }', '${columnName}', ${JSON.stringify(
-              freezeMetaDataByTableName[columnName],
-              null,
-              2
-            )})`
-          })
+        const addColumns = columns.remove.map((columnName) => {
+          return `await queryInterface.addColumn('${
+            model.options.tableName
+          }', '${columnName}', ${JSON.stringify(
+            freezeMetaDataByTableName[columnName],
+            null,
+            2
+          )})`
+        })
 
-          migrations.push({
-            label:
-              columns.remove.length > 1
-                ? 'remove-columns-from'
-                : 'remove-column-from',
-            content: `module.exports = {
+        migrations.push({
+          label:
+            columns.remove.length > 1
+              ? 'remove-columns-from'
+              : 'remove-column-from',
+          content: `module.exports = {
               async up(queryInterface, DataTypes) {
                 ${removeColumns.join(';')}
               },
@@ -282,15 +294,15 @@ void (async () => {
                 ${addColumns.join(';')}
               }
             }`
-          })
-        }
+        })
       }
-    } else {
-      metaData[model.options.tableName] = modelColumns
+    }
+  } else {
+    metaData[model.options.tableName] = modelColumns
 
-      migrations.push({
-        label: 'initial',
-        content: `module.exports = {
+    migrations.push({
+      label: 'initial',
+      content: `module.exports = {
           async up(queryInterface, DataTypes) {
             await queryInterface.createTable('${
               model.options.tableName
@@ -300,18 +312,18 @@ void (async () => {
             await queryInterface.dropTable('${model.options.tableName}')
           }
         }`
-      })
-    }
-
-    return migrations
+    })
   }
-})()
+
+  return migrations
+}
 
 /**
  * GET-META-DATA
+ * @param outputPath {string}
  * @return {Promise<Object>}
  */
-async function getMetaData() {
+async function getMetaData(outputPath) {
   try {
     return require(outputPath + '/meta.json')
   } catch (_) {
