@@ -1,6 +1,4 @@
 const fs = require('fs/promises')
-const path = require('path')
-const models = require('@risecorejs/core/models')
 const prettier = require('prettier')
 const { format } = require('date-fns')
 const equal = require('deep-equal')
@@ -9,19 +7,15 @@ const consola = require('consola')
 
 /**
  * MAKE-MIGRATIONS
- * @param outputPath {string?}
+ * @param outputPath {string}
+ * @param models {Object}
  * @return {Promise<void>}
  */
-module.exports = async (outputPath) => {
-  outputPath ||= path.resolve('database', 'migrations')
-
+module.exports = async (outputPath, models) => {
   const metaData = await getMetaData(outputPath)
 
   for (const [modelName, model] of Object.entries(models)) {
-    if (
-      !['Sequelize', 'sequelize'].includes(modelName) &&
-      model.options.autoMigrations
-    ) {
+    if (!['Sequelize', 'sequelize'].includes(modelName) && model.options.autoMigrations) {
       try {
         await createMigrations(model, outputPath, metaData)
       } catch (err) {
@@ -47,8 +41,8 @@ async function createMigrations(model, outputPath, metaData) {
 
   for (const rawMigration of rawMigrations) {
     const fileTimestamp = format(new Date(), "yyyy-MM-dd'T'HH-mm-ss")
-    const fileName = `${fileTimestamp}-${rawMigration.label}-${model.options.tableName}.js`
-    const filePath = outputPath + `/` + fileName
+    const filename = `${fileTimestamp}-${rawMigration.label}-${model.options.tableName}.js`
+    const filePath = outputPath + `/` + filename
 
     await fs.writeFile(
       filePath,
@@ -62,12 +56,9 @@ async function createMigrations(model, outputPath, metaData) {
       })
     )
 
-    consola.success('Migration created: ' + fileName)
+    consola.success('Migration created: ' + filename)
 
-    await fs.writeFile(
-      outputPath + '/meta.json',
-      JSON.stringify(metaData, null, 2)
-    )
+    await fs.writeFile(outputPath + '/meta.json', JSON.stringify(metaData, null, 2))
   }
 }
 
@@ -85,9 +76,7 @@ function getRawMigrations(model, metaData) {
   const metaDataByTableName = metaData[model.options.tableName]
 
   if (metaDataByTableName) {
-    const freezeMetaDataByTableName = Object.freeze(
-      JSON.parse(JSON.stringify(metaDataByTableName))
-    )
+    const freezeMetaDataByTableName = Object.freeze(JSON.parse(JSON.stringify(metaDataByTableName)))
 
     if (equal(metaDataByTableName, modelColumns)) {
       throw 'no change'
@@ -99,9 +88,7 @@ function getRawMigrations(model, metaData) {
         remove: []
       }
 
-      for (const [modelColumnName, modelColumnOptions] of Object.entries(
-        modelColumns
-      )) {
+      for (const [modelColumnName, modelColumnOptions] of Object.entries(modelColumns)) {
         const currentColumnOptions = metaDataByTableName[modelColumnName]
 
         if (currentColumnOptions) {
@@ -111,13 +98,9 @@ function getRawMigrations(model, metaData) {
             metaDataByTableName[modelColumnName] = modelColumnOptions
           }
         } else if (modelColumnOptions.prevColumnName) {
-          const currentColumnOptions =
-            metaDataByTableName[modelColumnOptions.prevColumnName]
+          const currentColumnOptions = metaDataByTableName[modelColumnOptions.prevColumnName]
 
-          if (
-            currentColumnOptions &&
-            modelColumnName !== modelColumnOptions.prevColumnName
-          ) {
+          if (currentColumnOptions && modelColumnName !== modelColumnOptions.prevColumnName) {
             columns.rename[modelColumnName] = modelColumnOptions
 
             delete metaDataByTableName[modelColumnOptions.prevColumnName]
@@ -135,13 +118,8 @@ function getRawMigrations(model, metaData) {
         }
       }
 
-      for (const [currentColumnName, currentColumnOptions] of Object.entries(
-        metaDataByTableName
-      )) {
-        if (
-          !modelColumns[currentColumnName] &&
-          !modelColumns[currentColumnOptions.nextColumnName]
-        ) {
+      for (const [currentColumnName, currentColumnOptions] of Object.entries(metaDataByTableName)) {
+        if (!modelColumns[currentColumnName] && !modelColumns[currentColumnOptions.nextColumnName]) {
           delete metaDataByTableName[currentColumnName]
 
           columns.remove.push(currentColumnName)
@@ -153,30 +131,33 @@ function getRawMigrations(model, metaData) {
       if (!_.isEmpty(columns.new)) {
         const columnNames = Object.keys(columns.new)
 
-        const addColumns = columnNames.map((columnName) => {
-          return `await queryInterface.addColumn('${
-            model.options.tableName
-          }', '${columnName}', ${JSON.stringify(
-            columns.new[columnName],
-            null,
-            2
-          )})`
-        })
+        const addColumns = {
+          up: [],
+          down: []
+        }
 
-        const removeColumns = columnNames.map((columnName) => {
-          return `await queryInterface.removeColumn('${model.options.tableName}', '${columnName}')`
-        })
+        for (const columnName of columnNames) {
+          addColumns.up.push(
+            `await queryInterface.addColumn(
+              '${model.options.tableName}',
+              '${columnName}',
+              ${JSON.stringify(columns.new[columnName], null, 2)}
+            )`
+          )
+
+          addColumns.down.push(`await queryInterface.removeColumn('${model.options.tableName}', '${columnName}')`)
+        }
 
         migrations.push({
           label: columnNames.length > 1 ? 'add-columns-to' : 'add-column-to',
           content: `module.exports = {
-              async up(queryInterface, DataTypes) {
-                ${addColumns.join(';')}
-              },
-              async down(queryInterface, DataTypes) {
-                ${removeColumns.join(';')}
-              }
-            }`
+            async up(queryInterface, { DataTypes }) {
+              ${addColumns.up.join(';')}
+            },
+            async down(queryInterface, Sequelize) {
+              ${addColumns.down.join(';')}
+            }
+          }`
         })
       }
 
@@ -184,39 +165,38 @@ function getRawMigrations(model, metaData) {
         const columnNames = Object.keys(columns.change)
 
         const changeColumns = {
-          up: columnNames.map(
-            (columnName) =>
-              `await queryInterface.changeColumn('${
-                model.options.tableName
-              }', '${columnName}', ${JSON.stringify(
-                columns.change[columnName],
-                null,
-                2
-              )})`
-          ),
-          down: columnNames.map(
-            (columnName) =>
-              `await queryInterface.changeColumn('${
-                model.options.tableName
-              }', '${columnName}', ${JSON.stringify(
-                freezeMetaDataByTableName[columnName],
-                null,
-                2
-              )})`
+          up: [],
+          down: []
+        }
+
+        for (const columnName of columnNames) {
+          changeColumns.up.push(
+            `await queryInterface.changeColumn(
+              '${model.options.tableName}',
+              '${columnName}',
+              ${JSON.stringify(columns.change[columnName], null, 2)}
+            )`
+          )
+
+          changeColumns.down.push(
+            `await queryInterface.changeColumn(
+              '${model.options.tableName}',
+              '${columnName}',
+              ${JSON.stringify(freezeMetaDataByTableName[columnName], null, 2)}
+            )`
           )
         }
 
         migrations.push({
-          label:
-            columnNames.length > 1 ? 'change-columns-to' : 'change-column-to',
+          label: columnNames.length > 1 ? 'change-columns-to' : 'change-column-to',
           content: `module.exports = {
-              async up(queryInterface, DataTypes) {
-                ${changeColumns.up.join(';')}
-              },
-              async down(queryInterface, DataTypes) {
-                ${changeColumns.down.join(';')}
-              }
-            }`
+            async up(queryInterface, { DataTypes }) {
+              ${changeColumns.up.join(';')}
+            },
+            async down(queryInterface, Sequelize) {
+              ${changeColumns.down.join(';')}
+            }
+          }`
         })
       }
 
@@ -224,76 +204,70 @@ function getRawMigrations(model, metaData) {
         const columnNames = Object.keys(columns.rename)
 
         const renameColumns = {
-          up: columnNames.map(
-            (columnName) =>
-              `await queryInterface.renameColumn('${
-                model.options.tableName
-              }', '${
-                modelColumns[columnName].prevColumnName
-              }', '${columnName}', ${JSON.stringify(
-                columns.rename[columnName],
-                null,
-                2
-              )})`
-          ),
-          down: columnNames.map(
-            (columnName) =>
-              `await queryInterface.renameColumn('${
-                model.options.tableName
-              }', '${columnName}', '${
-                modelColumns[columnName].prevColumnName
-              }', ${JSON.stringify(
-                freezeMetaDataByTableName[
-                  modelColumns[columnName].prevColumnName
-                ],
-                null,
-                2
-              )})`
+          up: [],
+          down: []
+        }
+
+        for (const columnName of columnNames) {
+          renameColumns.up.push(
+            `await queryInterface.renameColumn(
+              '${model.options.tableName}',
+              '${modelColumns[columnName].prevColumnName}',
+              '${columnName}', ${JSON.stringify(columns.rename[columnName], null, 2)}
+            )`
+          )
+
+          renameColumns.down.push(
+            `await queryInterface.renameColumn(
+              '${model.options.tableName}',
+              '${columnName}',
+              '${modelColumns[columnName].prevColumnName}',
+              ${JSON.stringify(freezeMetaDataByTableName[modelColumns[columnName].prevColumnName], null, 2)}
+            )`
           )
         }
 
         migrations.push({
-          label:
-            columnNames.length > 1 ? 'rename-columns-to' : 'rename-column-to',
+          label: columnNames.length > 1 ? 'rename-columns-to' : 'rename-column-to',
           content: `module.exports = {
-              async up(queryInterface, DataTypes) {
-                ${renameColumns.up.join(';')}
-              },
-              async down(queryInterface, DataTypes) {
-                ${renameColumns.down.join(';')}
-              }
-            }`
+            async up(queryInterface, { DataTypes }) {
+              ${renameColumns.up.join(';')}
+            },
+            async down(queryInterface, Sequelize) {
+              ${renameColumns.down.join(';')}
+            }
+          }`
         })
       }
 
       if (columns.remove.length) {
-        const removeColumns = columns.remove.map((columnName) => {
-          return `await queryInterface.removeColumn('${model.options.tableName}', '${columnName}')`
-        })
+        const removeColumns = {
+          up: [],
+          down: []
+        }
 
-        const addColumns = columns.remove.map((columnName) => {
-          return `await queryInterface.addColumn('${
-            model.options.tableName
-          }', '${columnName}', ${JSON.stringify(
-            freezeMetaDataByTableName[columnName],
-            null,
-            2
-          )})`
-        })
+        for (const columnName of columns.remove) {
+          removeColumns.up.push(`await queryInterface.removeColumn('${model.options.tableName}', '${columnName}')`)
+
+          removeColumns.down.push(
+            `await queryInterface.addColumn(
+              '${model.options.tableName}',
+              '${columnName}',
+              ${JSON.stringify(freezeMetaDataByTableName[columnName], null, 2)}
+            )`
+          )
+        }
 
         migrations.push({
-          label:
-            columns.remove.length > 1
-              ? 'remove-columns-from'
-              : 'remove-column-from',
+          label: columns.remove.length > 1 ? 'remove-columns-from' : 'remove-column-from',
           content: `module.exports = {
-              async up(queryInterface, DataTypes) {
-                ${removeColumns.join(';')}
-              },
-              async down(queryInterface, DataTypes) {
-                ${addColumns.join(';')}
-              }
-            }`
+            async up(queryInterface, { DataTypes }) {
+              ${removeColumns.up.join(';')}
+            },
+            async down(queryInterface, Sequelize) {
+              ${removeColumns.down.join(';')}
+            }
+          }`
         })
       }
     }
@@ -303,15 +277,16 @@ function getRawMigrations(model, metaData) {
     migrations.push({
       label: 'initial',
       content: `module.exports = {
-          async up(queryInterface, DataTypes) {
-            await queryInterface.createTable('${
-              model.options.tableName
-            }', ${JSON.stringify(modelColumns, null, 2)})
-          },
-          async down(queryInterface) {
-            await queryInterface.dropTable('${model.options.tableName}')
-          }
-        }`
+        async up(queryInterface, { DataTypes }) {
+          await queryInterface.createTable(
+            '${model.options.tableName}',
+            ${JSON.stringify(modelColumns, null, 2)}
+          )
+        },
+        async down(queryInterface, Sequelize) {
+          await queryInterface.dropTable('${model.options.tableName}')
+        }
+      }`
     })
   }
 
@@ -367,9 +342,7 @@ function getModelColumns(model) {
     columns['id'] = baseColumns.id
   }
 
-  for (const [modelColumnName, modelColumnOptions] of Object.entries(
-    attributes
-  )) {
+  for (const [modelColumnName, modelColumnOptions] of Object.entries(attributes)) {
     if (!Object.keys(baseColumns).includes(modelColumnName)) {
       const TYPE = modelColumnOptions.type.constructor.name
 
@@ -406,17 +379,12 @@ function getModelColumns(model) {
  * @return {string}
  */
 function formatMigrationContent(migrationContent) {
-  const matchedTypes = [
-    ...migrationContent.matchAll(new RegExp('"type":\\s+("DataTypes.+")', 'g'))
-  ]
+  const matchedTypes = [...migrationContent.matchAll(new RegExp('"type":\\s+("DataTypes.+")', 'g'))]
 
   const formattedTypes = [...new Set(matchedTypes.map(([, type]) => type))]
 
   for (const type of formattedTypes) {
-    migrationContent = migrationContent.replaceAll(
-      type,
-      type.replaceAll('"', '')
-    )
+    migrationContent = migrationContent.replaceAll(type, type.replaceAll('"', ''))
   }
 
   return migrationContent
