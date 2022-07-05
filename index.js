@@ -154,7 +154,7 @@ function getRawMigrations(model, metaData) {
             async up(queryInterface, { DataTypes }) {
               ${addColumns.up.join(';')}
             },
-            async down(queryInterface, Sequelize) {
+            async down(queryInterface, { DataTypes }) {
               ${addColumns.down.join(';')}
             }
           }`
@@ -193,7 +193,7 @@ function getRawMigrations(model, metaData) {
             async up(queryInterface, { DataTypes }) {
               ${changeColumns.up.join(';')}
             },
-            async down(queryInterface, Sequelize) {
+            async down(queryInterface, { DataTypes }) {
               ${changeColumns.down.join(';')}
             }
           }`
@@ -233,7 +233,7 @@ function getRawMigrations(model, metaData) {
             async up(queryInterface, { DataTypes }) {
               ${renameColumns.up.join(';')}
             },
-            async down(queryInterface, Sequelize) {
+            async down(queryInterface, { DataTypes }) {
               ${renameColumns.down.join(';')}
             }
           }`
@@ -264,7 +264,7 @@ function getRawMigrations(model, metaData) {
             async up(queryInterface, { DataTypes }) {
               ${removeColumns.up.join(';')}
             },
-            async down(queryInterface, Sequelize) {
+            async down(queryInterface, { DataTypes }) {
               ${removeColumns.down.join(';')}
             }
           }`
