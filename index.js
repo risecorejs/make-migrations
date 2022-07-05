@@ -154,7 +154,7 @@ function getRawMigrations(model, metaData) {
             async up(queryInterface, { DataTypes }) {
               ${addColumns.up.join(';')}
             },
-            async down(queryInterface, { DataTypes }) {
+            async down(queryInterface, Sequelize) {
               ${addColumns.down.join(';')}
             }
           }`
@@ -261,7 +261,7 @@ function getRawMigrations(model, metaData) {
         migrations.push({
           label: columns.remove.length > 1 ? 'remove-columns-from' : 'remove-column-from',
           content: `module.exports = {
-            async up(queryInterface, { DataTypes }) {
+            async up(queryInterface, Sequelize) {
               ${removeColumns.up.join(';')}
             },
             async down(queryInterface, { DataTypes }) {
